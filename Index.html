@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Instalar Ecowitt LilyGo T5 2.13"</title>
+  <script type="module" src="https://unpkg.com"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 16px; max-width: 480px; width: 100%; padding: 32px; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.3); }
+    h1 { font-size: 1.5rem; margin-bottom: 10px; }
+    p { color: #94a3b8; line-height: 1.6; font-size: 0.95rem; margin-bottom: 24px; }
+    .steps { text-align: left; background: #0f172a; padding: 16px 20px; border-radius: 12px; font-size: 0.88rem; color: #cbd5e1; margin-bottom: 24px; }
+    .steps li { margin-bottom: 8px; }
+    esp-web-install-button { --esp-tools-button-color: #0284c7; --esp-tools-button-text-color: #ffffff; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>🌤️ Ecowitt LilyGo T5 2.13"</h1>
+    <p>Instale o firmware diretamente no seu LilyGo T5 através do navegador (Chrome, Edge ou Opera).</p>
+    <ol class="steps">
+      <li>Ligue a placa <strong>LilyGo T5 2.13"</strong> ao computador por cabo USB.</li>
+      <li>Clique em <strong>Install</strong> e selecione a porta série (COM / ttyUSB).</li>
+      <li>Após terminar, ligue-se ao Wi-Fi <strong>LilyGo-Weather-Setup</strong> para configurar a rede e as chaves Ecowitt.</li>
+    </ol>
+    <esp-web-install-button manifest="./manifest.json"></esp-web-install-button>
+  </div>
+</body>
+</html>
