@@ -102,12 +102,37 @@ void addHistoryPoint(const String& timeStr, const String& t, const String& h, co
 
 String lastDebugInfo = "No fetch yet";
 
+// ================= IPMA alerts =================
+#define ALERT_MIN_LEVEL   1                  // 1=amarelo, 2=laranja, 3=vermelho (nível mínimo para inverter campos)
+#define ALERT_INTERVAL_MS 600000UL           // consultar o IPMA no máx. de 10 em 10 minutos
+#define MAX_ALERTS        8
+#define IPMA_WARN_URL     "https://api.ipma.pt/open-data/forecast/warnings/warnings_www.json"
+
+struct AlertItem {
+  uint8_t level = 0;      // 1=yellow 2=orange 3=red
+  bool active = false;    // já começou e ainda não terminou
+  String type;            // awarenessTypeName (ex.: "Precipitação")
+  String start;
+  String end;
+  String text;
+};
+
+String district = "STM";                     // idAreaAviso (Santarém por omissão)
+AlertItem alerts[MAX_ALERTS];
+int alertCount = 0;
+uint8_t fieldLevel[5] = {0, 0, 0, 0, 0};     // 1=Temp 2=Wind 3=Rain 4=Hum  (nível de aviso ativo)
+String alertFooter = "";                     // texto do rodapé do e-paper (vazio = sem aviso)
+String alertStatus = "--";
+unsigned long lastAlertFetch = 0;
+bool forceAlerts = true;
+
 void loadConfig() {
   prefs.begin("ecowitt", true);
   appKey = prefs.getString("appKey", "");
   apiKey = prefs.getString("apiKey", "");
   macAddr = prefs.getString("macAddr", "");
   refreshMins = prefs.getInt("refresh", 15);
+  district = prefs.getString("district", "STM");
   prefs.end();
 }
 
@@ -117,6 +142,7 @@ void saveConfig() {
   prefs.putString("apiKey", apiKey);
   prefs.putString("macAddr", macAddr);
   prefs.putInt("refresh", refreshMins);
+  prefs.putString("district", district);
   prefs.end();
 }
 
@@ -141,6 +167,26 @@ void handleApiData() {
   doc["indoorHum"] = weather.indoorHum;
   doc["battery"] = weather.battery;
   doc["lastUpdate"] = weather.lastUpdate;
+
+  // Memória do ESP32 (KB)
+  doc["freeHeap"]  = String(ESP.getFreeHeap() / 1024.0, 1);
+  doc["minHeap"]   = String(ESP.getMinFreeHeap() / 1024.0, 1);
+  doc["heapTotal"] = String(ESP.getHeapSize() / 1024.0, 0);
+
+  // Avisos IPMA
+  doc["district"] = district;
+  doc["alertStatus"] = alertStatus;
+  JsonArray al = doc["alerts"].to<JsonArray>();
+  const char* lvlName[] = {"green", "yellow", "orange", "red"};
+  for (int i = 0; i < alertCount; i++) {
+    JsonObject o = al.add<JsonObject>();
+    o["l"] = lvlName[alerts[i].level];
+    o["t"] = alerts[i].type;
+    o["s"] = alerts[i].start;
+    o["e"] = alerts[i].end;
+    o["x"] = alerts[i].text;
+    o["a"] = alerts[i].active;
+  }
 
   JsonArray arr = doc["history"].to<JsonArray>();
   for (int i = 0; i < histCount; i++) {
@@ -191,6 +237,16 @@ void handleRoot() {
   .chart-head { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px; }
   .stats { font-size:0.82rem; color:var(--muted); margin-top:4px; }
   svg { width:100%; height:190px; overflow:visible; display:block; }
+  .ipma { margin-bottom:20px; }
+  .ipma-row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:10px 0 14px; }
+  select { background:var(--card); color:var(--text); border:1px solid var(--border); padding:8px 10px; border-radius:10px; font-size:0.85rem; font-weight:600; }
+  .alert { border-left:6px solid var(--muted); background:var(--bg); border-radius:8px; padding:10px 12px; margin-top:8px; font-size:0.88rem; }
+  .alert.yellow { border-color:#eab308; } .alert.orange { border-color:#f97316; } .alert.red { border-color:#dc2626; }
+  .alert.soon { opacity:0.65; }
+  .alert b { display:block; margin-bottom:2px; }
+  .alert small { color:var(--muted); }
+  .noalert { font-size:0.88rem; color:var(--muted); }
+  .foot { text-align:center; font-size:0.75rem; color:var(--muted); margin-top:18px; }
 </style></head><body>
 <div class="wrap">
   <header>
@@ -235,6 +291,15 @@ void handleRoot() {
       <div class="extra">Bateria Estação: <strong id="battery">--</strong></div>
     </div>
   </div>
+  <div class="card ipma">
+    <div class="label">IPMA &bull; Previsão e Avisos</div>
+    <div class="ipma-row">
+      <select id="district" onchange="setDistrict(this.value)"></select>
+      <a class="btn" href="https://www.ipma.pt/pt/otempo/prev.significativa/" target="_blank" rel="noopener">🌦️ Previsão significativa</a>
+      <a class="btn" href="https://www.ipma.pt/pt/html.sam.jsp" target="_blank" rel="noopener">⚠️ Avisos (IPMA)</a>
+    </div>
+    <div id="alerts" class="noalert">A carregar avisos...</div>
+  </div>
   <div class="card">
     <div class="chart-head">
       <div>
@@ -249,6 +314,7 @@ void handleRoot() {
     </div>
     <svg id="chart" viewBox="0 0 800 180" preserveAspectRatio="none"></svg>
   </div>
+  <div class="foot">Memória livre: <span id="freeHeap">--</span> KB (mín. <span id="minHeap">--</span> KB) de <span id="heapTotal">--</span> KB</div>
 </div>
 <script>
   let histData = [], curMetric = 'temp', curUnit = '°C';
@@ -311,15 +377,56 @@ void handleRoot() {
     fetch('/api/data').then(r => r.json()).then(d => {
       for (const [k, v] of Object.entries(d)) {
         if (k === 'history') { histData = v; renderChart(); continue; }
+        if (k === 'alerts') { lastAlerts = v; continue; }
+        if (k === 'alertStatus') { lastAlertStatus = v; continue; }
+        if (k === 'district') { document.getElementById('district').value = v; continue; }
         const el = document.getElementById(k);
         if (el) el.textContent = v;
       }
+      renderAlerts();
     });
   }
   function forceSync() {
     document.getElementById('lastUpdate').textContent = 'A sincronizar...';
     fetch('/refresh').then(() => setTimeout(loadData, 2500));
   }
+
+  // ---- IPMA: distrito e avisos (o ESP32 faz o pedido ao IPMA) ----
+  const DISTRICTS = [
+    ['AVR','Aveiro'],['BJA','Beja'],['BRG','Braga'],['BGC','Bragança'],['CBO','Castelo Branco'],
+    ['CBR','Coimbra'],['EVR','Évora'],['FAR','Faro'],['GDA','Guarda'],['LRA','Leiria'],
+    ['LSB','Lisboa'],['PTG','Portalegre'],['PRT','Porto'],['STM','Santarém'],['STB','Setúbal'],
+    ['VCT','Viana do Castelo'],['VRL','Vila Real'],['VIS','Viseu']
+  ];
+  const LEVELS = { yellow:'Amarelo', orange:'Laranja', red:'Vermelho' };
+  let lastAlerts = [], lastAlertStatus = '--';
+
+  document.getElementById('district').innerHTML =
+    DISTRICTS.map(d => `<option value="${d[0]}"${d[0] === 'STM' ? ' selected' : ''}>${d[1]}</option>`).join('');
+
+  function esc(t) { return String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+  function fmt(iso) {
+    const d = new Date(iso);
+    return isNaN(d) ? '' : d.toLocaleString('pt-PT', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+  }
+  function renderAlerts() {
+    const box = document.getElementById('alerts');
+    if (lastAlertStatus !== 'OK' && !lastAlerts.length) {
+      box.className = 'noalert';
+      box.textContent = lastAlertStatus === '--' ? 'A aguardar dados do IPMA...' : 'IPMA: ' + lastAlertStatus;
+      return;
+    }
+    if (!lastAlerts.length) { box.className = 'noalert'; box.textContent = '✅ Sem avisos para este distrito.'; return; }
+    box.className = '';
+    box.innerHTML = lastAlerts.map(w => `<div class="alert ${esc(w.l)}${w.a ? '' : ' soon'}">
+      <b>${esc(LEVELS[w.l] || w.l)} &bull; ${esc(w.t)}${w.a ? '' : ' (em breve)'}</b>
+      ${esc(w.x)}<br><small>${fmt(w.s)} → ${fmt(w.e)}</small></div>`).join('');
+  }
+  function setDistrict(code) {
+    document.getElementById('alerts').textContent = 'A atualizar avisos...';
+    fetch('/setdistrict?code=' + encodeURIComponent(code)).then(() => setTimeout(loadData, 8000));
+  }
+
   loadData();
   setInterval(loadData, 30000);
 </script>
@@ -503,6 +610,176 @@ char timeStr[20];
 
 
 
+// Campo do e-paper afetado por cada tipo de aviso: 1=Temp 2=Wind 3=Rain 4=Hum (0 = nenhum)
+uint8_t alertField(const String& t) {
+  if (t.indexOf("Nevoeiro") >= 0) return 4;
+  if (t.indexOf("Precip") >= 0 || t.indexOf("Trovoada") >= 0 || t.indexOf("Neve") >= 0) return 3;
+  if (t.indexOf("Vento") >= 0) return 2;
+  if (t.indexOf("Quente") >= 0 || t.indexOf("Frio") >= 0) return 1;
+  return 0;
+}
+
+// Nome curto (ASCII, para a fonte embutida do rodapé)
+const char* alertLabel(const String& t) {
+  if (t.indexOf("Nevoeiro") >= 0) return "Nevoeiro";
+  if (t.indexOf("Precip") >= 0) return "Chuva";
+  if (t.indexOf("Trovoada") >= 0) return "Trovoada";
+  if (t.indexOf("Neve") >= 0) return "Neve";
+  if (t.indexOf("Vento") >= 0) return "Vento";
+  if (t.indexOf("Quente") >= 0) return "Calor";
+  if (t.indexOf("Frio") >= 0) return "Frio";
+  if (t.indexOf("Agita") >= 0) return "Mar";
+  return "Outro";
+}
+
+// Calcula níveis por campo e texto do rodapé a partir de alerts[]
+void computeAlertState() {
+  for (int i = 0; i < 5; i++) fieldLevel[i] = 0;
+  uint8_t maxL = 0;
+  String labels = "";
+  for (int i = 0; i < alertCount; i++) {
+    if (!alerts[i].active || alerts[i].level < ALERT_MIN_LEVEL) continue;
+    if (alerts[i].level > maxL) maxL = alerts[i].level;
+    String lb = alertLabel(alerts[i].type);
+    if (labels.indexOf(lb) < 0) { if (labels.length()) labels += ","; labels += lb; }
+    uint8_t f = alertField(alerts[i].type);
+    if (f && alerts[i].level > fieldLevel[f]) fieldLevel[f] = alerts[i].level;
+  }
+  const char* lvlPt[] = {"", "AMARELO", "LARANJA", "VERMELHO"};
+  alertFooter = maxL ? String("AVISO ") + lvlPt[maxL] + ": " + labels : "";
+  alertStatus = "OK";
+}
+
+// ---- MODO DE TESTE: avisos falsos (sem consultar o IPMA) ----
+#define ALERT_TEST_MODE  0      // 1 = usar avisos de teste, 0 = IPMA real
+#define ALERT_TEST_LEVEL 2      // 1=amarelo 2=laranja 3=vermelho
+
+void fetchAlerts() {
+#if ALERT_TEST_MODE
+  alertCount = 1;
+  alerts[0].level  = ALERT_TEST_LEVEL;
+  alerts[0].active = true;
+  alerts[0].type   = "Precipitação";
+  alerts[0].start  = "2026-11-23T00:00:00";
+  alerts[0].end    = "2026-11-30T23:59:00";
+  alerts[0].text   = "AVISO DE TESTE: chuva persistente, por vezes forte.";
+  computeAlertState();
+  alertStatus = "OK (teste)";
+  return;
+#endif
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  http.useHTTP10(true);          // sem "chunked": permite ler o stream em bruto
+  http.setTimeout(10000);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+
+  if (!http.begin(client, IPMA_WARN_URL)) { alertStatus = "begin falhou"; return; }
+  int code = http.GET();
+  if (code != 200) { alertStatus = "HTTP " + String(code); http.end(); return; }
+
+  char nowStr[20] = "";
+  bool haveNow = false;
+  struct tm ti;
+  if (getLocalTime(&ti, 100)) {
+    strftime(nowStr, sizeof(nowStr), "%Y-%m-%dT%H:%M:%S", &ti);
+    haveNow = true;
+  }
+
+  AlertItem tmp[MAX_ALERTS];
+  int n = 0, parsed = 0;
+
+  // O ficheiro é grande: lê-se objeto a objeto (sem o carregar todo para a RAM)
+  WiFiClient* st = http.getStreamPtr();
+  String obj;
+  obj.reserve(768);
+  int depth = 0;
+  bool inStr = false, esc = false, overflow = false;
+  unsigned long lastData = millis();
+
+  while ((http.connected() || st->available()) && millis() - lastData < 10000) {
+    if (!st->available()) { delay(2); continue; }
+    lastData = millis();
+    char c = (char)st->read();
+
+    if (depth == 0) {
+      if (c == '{') { depth = 1; obj = "{"; overflow = false; inStr = false; esc = false; }
+      continue;
+    }
+    if (!overflow) { if (obj.length() < 2048) obj += c; else overflow = true; }
+
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c == '\\') esc = true;
+      else if (c == '"') inStr = false;
+    } else {
+      if (c == '"') inStr = true;
+      else if (c == '{') depth++;
+      else if (c == '}') {
+        depth--;
+        if (depth == 0 && !overflow) {
+          JsonDocument d;
+          if (!deserializeJson(d, obj)) {
+            parsed++;
+            const char* area = d["idAreaAviso"];
+            const char* lv   = d["awarenessLevelID"];
+            if (area && lv && district.equals(area) && n < MAX_ALERTS) {
+              uint8_t level = 0;
+              if (strcmp(lv, "yellow") == 0) level = 1;
+              else if (strcmp(lv, "orange") == 0) level = 2;
+              else if (strcmp(lv, "red") == 0) level = 3;
+              const char* st_ = d["startTime"] | "";
+              const char* en_ = d["endTime"] | "";
+              bool expired = haveNow && en_[0] && strcmp(en_, nowStr) < 0;
+              if (level > 0 && !expired) {
+                tmp[n].level  = level;
+                tmp[n].active = !haveNow || (strcmp(st_, nowStr) <= 0);
+                tmp[n].type   = String(d["awarenessTypeName"] | "");
+                tmp[n].start  = String(st_);
+                tmp[n].end    = String(en_);
+                String tx     = String(d["text"] | "");
+                if (tx.length() > 300) tx = tx.substring(0, 300);
+                tmp[n].text   = tx;
+                n++;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  http.end();
+
+  if (parsed == 0) { alertStatus = "formato inesperado"; return; }
+
+  // Commit
+  alertCount = n;
+  for (int i = 0; i < n; i++) alerts[i] = tmp[i];
+
+  computeAlertState();
+}
+
+// Pinta o fundo do campo de preto (modo "negativo") se houver aviso; define a cor do texto
+void fieldBox(int x, int y, int w, int h, uint8_t lvl) {
+  bool inv = (lvl > 0 && lvl >= ALERT_MIN_LEVEL);
+  if (inv) display.fillRect(x, y, w, h, GxEPD_BLACK);
+  display.setTextColor(inv ? GxEPD_WHITE : GxEPD_BLACK);
+}
+
+void handleSetDistrict() {
+  String code = server.arg("code");
+  code.trim();
+  code.toUpperCase();
+  bool ok = (code.length() == 3);
+  for (int i = 0; ok && i < 3; i++) if (!isAlpha(code[i])) ok = false;
+  if (!ok) { server.send(400, "text/plain", "bad code"); return; }
+  district = code;
+  saveConfig();
+  forceAlerts = true;
+  forceRefresh = true;
+  server.send(200, "text/plain", "OK");
+}
+
 void drawDisplay() {
   display.setRotation(1); // Landscape: 250x122 px
   display.setFullWindow();
@@ -517,6 +794,7 @@ void drawDisplay() {
     display.drawLine(0, 104, 250, 104, GxEPD_BLACK);
 
     // Top-Left: Outdoor Temperature with "Temp" header
+    fieldBox(0, 0, 125, 56, fieldLevel[1]);
     display.setFont(&FreeSans9pt7b);
     display.setCursor(6, 16);
     display.print("Temp");
@@ -526,7 +804,8 @@ void drawDisplay() {
     display.setFont(&FreeSansBold9pt7b);
     display.print(" C");
 
-       // Top-Right: Wind + Cardinal Direction
+    // Top-Right: Wind + Cardinal Direction
+    fieldBox(126, 0, 124, 56, fieldLevel[2]);
     display.setFont(&FreeSans9pt7b);
     display.setCursor(133, 16);
     display.print("Wind (" + weather.windDir + ")");
@@ -539,12 +818,15 @@ void drawDisplay() {
 
     // Bottom-Left: Rain & Humidity
     display.setFont(&FreeSans9pt7b);
+    fieldBox(0, 57, 125, 25, fieldLevel[3]);
     display.setCursor(6, 76);
     display.print("Rain: " + weather.rain + " mm");
+    fieldBox(0, 82, 125, 22, fieldLevel[4]);
     display.setCursor(6, 97);
     display.print("Hum: " + weather.humidity + "%");
 
     // Bottom-Right: Solar & Station Battery
+    fieldBox(126, 57, 124, 47, 0);
     display.setCursor(133, 76);
     display.print("Sol: " + weather.solar + " W/m2");
     display.setCursor(133, 97);
@@ -552,8 +834,21 @@ void drawDisplay() {
 
     // Footer bar: IP + Last Fetch Date/Time
     display.setFont(NULL); // Built-in crisp 6x8 font
-    display.setCursor(6, 110);
-    display.print(weather.status + " | " + weather.lastUpdate);
+    if (alertFooter.length()) {
+      // Aviso ativo: barra preta com texto branco (substitui o IP enquanto durar)
+      display.fillRect(0, 105, 250, 17, GxEPD_BLACK);
+      display.setTextColor(GxEPD_WHITE);
+      display.setCursor(6, 110);
+      display.print(alertFooter.substring(0, 33));
+      String hhmm = weather.lastUpdate.length() >= 5 ? weather.lastUpdate.substring(weather.lastUpdate.length() - 5) : "";
+      display.setCursor(215, 110);
+      display.print(hhmm);
+      display.setTextColor(GxEPD_BLACK);
+    } else {
+      display.setTextColor(GxEPD_BLACK);
+      display.setCursor(6, 110);
+      display.print(weather.status + " | " + weather.lastUpdate);
+    }
 
   } while (display.nextPage());
   display.hibernate();
@@ -578,6 +873,7 @@ void setup() {
   });
   server.on("/save", HTTP_POST, handleSave);
   server.on("/resetwifi", HTTP_POST, handleResetWifi);
+  server.on("/setdistrict", handleSetDistrict);
 
   // Show setup instructions on screen while connecting
   display.setRotation(1);
@@ -631,6 +927,11 @@ void loop() {
     forceRefresh = false;
     lastFetch = millis();
     fetchEcowittData();
+    if (forceAlerts || millis() - lastAlertFetch >= ALERT_INTERVAL_MS) {
+      forceAlerts = false;
+      lastAlertFetch = millis();
+      fetchAlerts();
+    }
     drawDisplay();
   }
 }
