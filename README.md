@@ -44,7 +44,7 @@ Flash the firmware directly to your LilyGo T5 2.13" from your browser (Chrome, E
 
 ## ⚙️ Initial Setup Guide
 
-1. **Flash the Firmware:** Use the [Web Installer](https://github.io) or compile `Ecowitt_LilygoT5_2.13.ino` with Arduino IDE.
+1. **Flash the Firmware:** Use the [Web Installer](https://esptool.spacehuhn.com/) or compile `Ecowitt_LilygoT5_2.13.ino` with Arduino IDE.
 2. **Connect to Wi-Fi:**
    * On first boot, the display instructs you to connect to the temporary Wi-Fi access point **`LilyGo-Weather-Setup`**.
    * Select your home Wi-Fi network and enter your password.
