@@ -8,7 +8,7 @@ An ultra-low-power e-paper display and modern local web dashboard for **Ecowitt*
 
 Flash the firmware directly to your LilyGo T5 2.13" from your browser (Chrome, Edge, or Opera) without installing Arduino IDE or Python:
 
-👉 **[Install via ESP Web Tools](https://github.io)**
+👉 **[Install via ESP Web Tools](https://esptool.spacehuhn.com/)**
 
 ---
 
