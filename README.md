@@ -20,10 +20,15 @@ Flash the firmware directly to your LilyGo T5 2.13" from your browser (Chrome, E
   * Extended telemetry: Feels-like temperature, dew point, wind gusts & degrees, rain rate, UV index, barometric pressure, and indoor temperature/humidity.
   * **Interactive 24-Hour History Chart:** Lightweight SVG chart tracking Temperature (`°C`), Humidity (`%`), and Pressure (`hPa`) over the last 96 readings (15-minute intervals).
   * Manual sync button (`🔄 Atualizar`) and onboard button trigger (`IO39`).
+  * Links to IPMA page
+  * Allows to select District
+  * Display current Alerts for the selected District - on the display they appear in negative in the relevant section (Rain, Wind, etc), also on the last line.
+
 * **Zero-Code Configuration (`http://<ESP32-IP>/setup`):**
   * Captive portal (`LilyGo-Weather-Setup`) via `WiFiManager` for effortless Wi-Fi onboarding.
   * Persistent NVS storage (`Preferences`) for Ecowitt **Application Key**, **API Key**, **Station MAC Address**, and custom refresh interval.
 * **Automatic Daylight Saving Time:** Configured for Portugal (`WET0WEST`), easily adaptable to any POSIX timezone string.
+
 
 ---
 
