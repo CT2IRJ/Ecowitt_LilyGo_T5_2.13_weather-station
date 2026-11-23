@@ -49,11 +49,12 @@ Flash the firmware directly to your LilyGo T5 2.13" from your browser (Chrome, E
 
 ## ⚙️ Initial Setup Guide
 
-1. **Flash the Firmware:** Use the [Web Installer](https://esptool.spacehuhn.com/) or compile `Ecowitt_LilygoT5_2.13.ino` with Arduino IDE.
-2. **Connect to Wi-Fi:**
+1. **Compile** `Ecowitt_LilygoT5_2.13.ino` with Arduino IDE - OR -
+2. **Flash the Firmware:** Use the [Web Installer](https://esptool.spacehuhn.com/) - **Attention: Must have selected Huge APP (3MB No OTA / 1MB SPIFFS)**
+3. **Connect to Wi-Fi:**
    * On first boot, the display instructs you to connect to the temporary Wi-Fi access point **`LilyGo-Weather-Setup`**.
    * Select your home Wi-Fi network and enter your password.
-3. **Configure Ecowitt API Credentials:**
+4. **Configure Ecowitt API Credentials:**
    * Note the IP address displayed in the bottom-left footer of the e-paper screen.
    * Open `http://<ESP32-IP>/` in your browser (it automatically redirects to `/setup` on first run).
    * Enter your **Application Key**, **API Key** (from your [Ecowitt.net](https://ecowitt.net) user profile), and your weather station's **MAC Address**.
